@@ -16,6 +16,8 @@ pub const MIN_PAGE: i64 = 0;
 pub enum ArgType {
   Integer,
   IntegerArray,
+  ObjectArray,
+  OptionalBoolean,
   OptionalInteger {
     default: i64,
     max: Option<i64>,
@@ -23,6 +25,7 @@ pub enum ArgType {
   },
   OptionalIntegerArray,
   OptionalNumber,
+  OptionalObjectArray,
   OptionalString,
   String,
 }
@@ -50,6 +53,8 @@ impl ArgType {
       ArgType::IntegerArray | ArgType::OptionalIntegerArray => {
         json!({ "type": "array", "items": { "type": "integer" } })
       }
+      ArgType::ObjectArray | ArgType::OptionalObjectArray => json!({ "type": "array" }),
+      ArgType::OptionalBoolean => json!({ "type": "boolean" }),
       ArgType::OptionalNumber => json!({ "type": "number" }),
       ArgType::OptionalString | ArgType::String => json!({ "type": "string" }),
     }
@@ -58,9 +63,11 @@ impl ArgType {
   fn required(self) -> bool {
     !matches!(
       self,
-      ArgType::OptionalInteger { .. }
+      ArgType::OptionalBoolean
+        | ArgType::OptionalInteger { .. }
         | ArgType::OptionalIntegerArray
         | ArgType::OptionalNumber
+        | ArgType::OptionalObjectArray
         | ArgType::OptionalString
     )
   }
@@ -69,6 +76,7 @@ impl ArgType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArgSpec {
   description: Cow<'static, str>,
+  items: Vec<ArgSpec>,
   name: &'static str,
   ty: ArgType,
 }
@@ -77,6 +85,7 @@ impl ArgSpec {
   pub fn integer(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
       description: description.into(),
+      items: Vec::new(),
       name,
       ty: ArgType::Integer,
     }
@@ -85,8 +94,33 @@ impl ArgSpec {
   pub fn integer_array(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
       description: description.into(),
+      items: Vec::new(),
       name,
       ty: ArgType::IntegerArray,
+    }
+  }
+
+  /// Each element is an object whose fields are `items`. A field given an empty description publishes none, so the
+  /// array's own description stays the one translated string that documents the shape.
+  pub fn object_array(
+    name: &'static str,
+    description: impl Into<Cow<'static, str>>,
+    items: impl IntoIterator<Item = ArgSpec>,
+  ) -> Self {
+    Self {
+      description: description.into(),
+      items: items.into_iter().collect(),
+      name,
+      ty: ArgType::ObjectArray,
+    }
+  }
+
+  pub fn optional_boolean(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
+    Self {
+      description: description.into(),
+      items: Vec::new(),
+      name,
+      ty: ArgType::OptionalBoolean,
     }
   }
 
@@ -95,6 +129,7 @@ impl ArgSpec {
     let (min, max) = pagination_bounds(name);
     Self {
       description: description.into(),
+      items: Vec::new(),
       name,
       ty: ArgType::OptionalInteger {
         default,
@@ -107,6 +142,7 @@ impl ArgSpec {
   pub fn optional_integer_array(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
       description: description.into(),
+      items: Vec::new(),
       name,
       ty: ArgType::OptionalIntegerArray,
     }
@@ -115,14 +151,30 @@ impl ArgSpec {
   pub fn optional_number(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
       description: description.into(),
+      items: Vec::new(),
       name,
       ty: ArgType::OptionalNumber,
+    }
+  }
+
+  /// See [`ArgSpec::object_array`] for how `items` are published.
+  pub fn optional_object_array(
+    name: &'static str,
+    description: impl Into<Cow<'static, str>>,
+    items: impl IntoIterator<Item = ArgSpec>,
+  ) -> Self {
+    Self {
+      description: description.into(),
+      items: items.into_iter().collect(),
+      name,
+      ty: ArgType::OptionalObjectArray,
     }
   }
 
   pub fn optional_string(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
       description: description.into(),
+      items: Vec::new(),
       name,
       ty: ArgType::OptionalString,
     }
@@ -131,6 +183,7 @@ impl ArgSpec {
   pub fn string(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
       description: description.into(),
+      items: Vec::new(),
       name,
       ty: ArgType::String,
     }
@@ -151,7 +204,12 @@ impl ArgSpec {
   fn property(&self) -> Value {
     let mut schema = self.ty.json_schema();
     if let Value::Object(map) = &mut schema {
-      map.insert("description".to_owned(), json!(self.description.as_ref()));
+      if matches!(self.ty, ArgType::ObjectArray | ArgType::OptionalObjectArray) {
+        map.insert("items".to_owned(), input_schema(&self.items));
+      }
+      if !self.description.is_empty() {
+        map.insert("description".to_owned(), json!(self.description.as_ref()));
+      }
     }
     schema
   }
@@ -496,6 +554,61 @@ mod tests {
       assert_eq!(schema["properties"]["label_id"]["default"], json!(0));
       assert!(schema["properties"]["label_id"].get("minimum").is_none());
       assert!(schema["properties"]["label_id"].get("maximum").is_none());
+    }
+
+    #[test]
+    fn it_emits_an_object_array_with_its_item_schema() {
+      let schema = input_schema(&[ArgSpec::object_array(
+        "types",
+        "The plan's types",
+        [
+          ArgSpec::integer("type_id", ""),
+          ArgSpec::optional_boolean("built", ""),
+          ArgSpec::optional_integer("me", 0, ""),
+        ],
+      )]);
+
+      let types = &schema["properties"]["types"];
+      assert_eq!(types["type"], "array");
+      assert_eq!(types["description"], "The plan's types");
+      assert_eq!(types["items"]["type"], "object");
+      assert_eq!(types["items"]["properties"]["type_id"]["type"], "integer");
+      assert_eq!(types["items"]["properties"]["built"]["type"], "boolean");
+      assert_eq!(types["items"]["properties"]["me"]["type"], "integer");
+      assert_eq!(types["items"]["required"], json!(["type_id"]));
+
+      assert!(schema["required"].as_array().unwrap().contains(&json!("types")));
+    }
+
+    #[test]
+    fn it_omits_the_description_of_an_item_field_given_none() {
+      let schema = input_schema(&[ArgSpec::object_array(
+        "types",
+        "The plan's types",
+        [ArgSpec::integer("type_id", "")],
+      )]);
+
+      let type_id = &schema["properties"]["types"]["items"]["properties"]["type_id"];
+      assert!(type_id.get("description").is_none());
+    }
+
+    #[test]
+    fn it_keeps_optional_booleans_and_object_arrays_out_of_required() {
+      let schema = input_schema(&[
+        ArgSpec::optional_boolean("enabled", "Whether the rule is enabled"),
+        ArgSpec::optional_object_array("conditions", "The rule's conditions", [ArgSpec::string("field", "")]),
+      ]);
+
+      assert_eq!(schema["properties"]["enabled"]["type"], "boolean");
+      assert_eq!(schema["properties"]["conditions"]["type"], "array");
+      assert_eq!(
+        schema["properties"]["conditions"]["items"]["required"],
+        json!(["field"])
+      );
+
+      let required = schema["required"].as_array().unwrap();
+      assert!(!required.contains(&json!("enabled")));
+      assert!(!required.contains(&json!("conditions")));
     }
   }
 }
