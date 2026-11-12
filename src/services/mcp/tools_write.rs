@@ -232,6 +232,18 @@ fn budget_set_rule_tool() -> McpTool {
     ArgSpec::integer("category_id", t!("mcp.tools.budget_set_rule_category_id").into_owned()),
     ArgSpec::string("name", t!("mcp.tools.budget_set_rule_name").into_owned()),
     ArgSpec::optional_integer("rule_id", 0, t!("mcp.tools.budget_set_rule_rule_id").into_owned()),
+    ArgSpec::optional_object_array(
+      "conditions",
+      t!("mcp.tools.budget_set_rule_conditions").into_owned(),
+      [
+        ArgSpec::string("field", ""),
+        ArgSpec::string("op", ""),
+        ArgSpec::string("value", ""),
+        ArgSpec::optional_string("value2", ""),
+      ],
+    ),
+    ArgSpec::optional_boolean("enabled", t!("mcp.tools.budget_set_rule_enabled").into_owned()),
+    ArgSpec::optional_string("match_mode", t!("mcp.tools.budget_set_rule_match_mode").into_owned()),
   ])
 }
 
@@ -371,6 +383,17 @@ fn skill_plan_replace_tool() -> McpTool {
   )
   .with_args([
     ArgSpec::integer("plan_id", t!("mcp.tools.skill_plan_replace_plan_id").into_owned()),
+    ArgSpec::object_array(
+      "entries",
+      t!("mcp.tools.skill_plan_replace_entries").into_owned(),
+      [
+        ArgSpec::integer("skill_id", ""),
+        ArgSpec::integer("to_level", ""),
+        ArgSpec::optional_boolean("is_auto", ""),
+        ArgSpec::optional_string("note", ""),
+        ArgSpec::optional_string("priority", ""),
+      ],
+    ),
     dry_run_arg(),
   ])
 }
@@ -425,6 +448,19 @@ fn planner_create_tool() -> McpTool {
       t!("mcp.tools.planner_create_product_type_id").into_owned(),
     ),
     ArgSpec::integer("runs", t!("mcp.tools.planner_create_runs").into_owned()),
+    ArgSpec::object_array(
+      "types",
+      t!("mcp.tools.planner_create_types").into_owned(),
+      [
+        ArgSpec::integer("type_id", ""),
+        ArgSpec::optional_boolean("built", ""),
+        ArgSpec::optional_integer("facility_structure", 0, ""),
+        ArgSpec::optional_integer("facility_system", 0, ""),
+        ArgSpec::optional_integer("me", 0, ""),
+        ArgSpec::optional_integer("te", 0, ""),
+        ArgSpec::optional_boolean("use_stock", ""),
+      ],
+    ),
     ArgSpec::optional_integer(
       "root_facility_system",
       0,
@@ -469,6 +505,17 @@ fn planner_replace_segments_tool() -> McpTool {
   )
   .with_args([
     ArgSpec::integer("plan_id", t!("mcp.tools.planner_replace_segments_plan_id").into_owned()),
+    ArgSpec::object_array(
+      "segments",
+      t!("mcp.tools.planner_replace_segments_segments").into_owned(),
+      [
+        ArgSpec::integer("runs", ""),
+        ArgSpec::integer("segment_index", ""),
+        ArgSpec::integer("type_id", ""),
+        ArgSpec::optional_integer("clone_id", 0, ""),
+        ArgSpec::optional_integer("pilot_id", 0, ""),
+      ],
+    ),
     dry_run_arg(),
   ])
 }
@@ -516,6 +563,10 @@ fn watchlist_add_tool() -> McpTool {
     ArgSpec::optional_string("direction", t!("mcp.tools.watchlist_add_direction").into_owned()),
     ArgSpec::optional_integer("region_id", 0, t!("mcp.tools.watchlist_add_region_id").into_owned()),
     ArgSpec::optional_integer("location_id", 0, t!("mcp.tools.watchlist_add_location_id").into_owned()),
+    ArgSpec::optional_string(
+      "location_tier",
+      t!("mcp.tools.watchlist_add_location_tier").into_owned(),
+    ),
     ArgSpec::optional_number("target_price", t!("mcp.tools.watchlist_add_target_price").into_owned()),
   ])
 }
@@ -545,6 +596,10 @@ fn watchlist_update_tool() -> McpTool {
       "location_id",
       0,
       t!("mcp.tools.watchlist_update_location_id").into_owned(),
+    ),
+    ArgSpec::optional_string(
+      "location_tier",
+      t!("mcp.tools.watchlist_update_location_tier").into_owned(),
     ),
     ArgSpec::optional_number(
       "target_price",
@@ -614,7 +669,8 @@ fn dry_run(args: &Value) -> bool {
     .unwrap_or(false)
 }
 
-/// Advertised as an integer because `ArgSpec` has no boolean type; `dry_run()` also accepts JSON `true`.
+/// Advertised as an integer, its published type since before `ArgSpec` had a boolean; `dry_run()` also accepts JSON
+/// `true`.
 fn dry_run_arg() -> ArgSpec {
   ArgSpec::optional_integer("dry_run", 0, t!("mcp.tools.shared_arg_dry_run").into_owned())
 }
@@ -2111,7 +2167,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::services::mcp::args::ArgType;
+    use crate::services::mcp::args::{ArgType, input_schema};
 
     fn tool(name: &str) -> McpTool {
       tools().into_iter().find(|t| t.name() == name).expect("tool registered")
@@ -2160,6 +2216,73 @@ mod tests {
     fn reorder_advertises_an_integer_array() {
       let reorder = tool("skill_plan_reorder");
       assert_eq!(arg_ty(&reorder, "ordered_entry_ids"), ArgType::IntegerArray);
+    }
+
+    #[test]
+    fn budget_set_rule_advertises_its_optional_inputs() {
+      let set_rule = tool("budget_set_rule");
+      assert_eq!(arg_ty(&set_rule, "conditions"), ArgType::OptionalObjectArray);
+      assert_eq!(arg_ty(&set_rule, "enabled"), ArgType::OptionalBoolean);
+      assert_eq!(arg_ty(&set_rule, "match_mode"), ArgType::OptionalString);
+
+      let schema = input_schema(set_rule.args());
+      let condition = &schema["properties"]["conditions"]["items"];
+      assert_eq!(condition["required"], json!(["field", "op", "value"]));
+      assert_eq!(condition["properties"]["value2"]["type"], "string");
+    }
+
+    #[test]
+    fn planner_create_advertises_the_types_its_handler_requires() {
+      let create = tool("planner_create");
+      assert_eq!(arg_ty(&create, "types"), ArgType::ObjectArray);
+
+      let schema = input_schema(create.args());
+      assert!(schema["required"].as_array().unwrap().contains(&json!("types")));
+      let plan_type = &schema["properties"]["types"]["items"];
+      assert_eq!(plan_type["required"], json!(["type_id"]));
+      assert_eq!(plan_type["properties"]["type_id"]["type"], "integer");
+      for flag in ["built", "use_stock"] {
+        assert_eq!(plan_type["properties"][flag]["type"], "boolean");
+      }
+      for number in ["facility_structure", "facility_system", "me", "te"] {
+        assert_eq!(plan_type["properties"][number]["type"], "integer");
+      }
+    }
+
+    #[test]
+    fn planner_replace_segments_advertises_the_segments_its_handler_requires() {
+      let replace = tool("planner_replace_segments");
+      assert_eq!(arg_ty(&replace, "segments"), ArgType::ObjectArray);
+
+      let schema = input_schema(replace.args());
+      assert!(schema["required"].as_array().unwrap().contains(&json!("segments")));
+      let segment = &schema["properties"]["segments"]["items"];
+      assert_eq!(segment["required"], json!(["runs", "segment_index", "type_id"]));
+      for id in ["clone_id", "pilot_id"] {
+        assert_eq!(segment["properties"][id]["type"], "integer");
+      }
+    }
+
+    #[test]
+    fn skill_plan_replace_advertises_the_entries_its_handler_requires() {
+      let replace = tool("skill_plan_replace");
+      assert_eq!(arg_ty(&replace, "entries"), ArgType::ObjectArray);
+
+      let schema = input_schema(replace.args());
+      assert!(schema["required"].as_array().unwrap().contains(&json!("entries")));
+      let entry = &schema["properties"]["entries"]["items"];
+      assert_eq!(entry["required"], json!(["skill_id", "to_level"]));
+      assert_eq!(entry["properties"]["is_auto"]["type"], "boolean");
+      for text in ["note", "priority"] {
+        assert_eq!(entry["properties"][text]["type"], "string");
+      }
+    }
+
+    #[test]
+    fn watchlist_tools_advertise_the_location_tier() {
+      for name in ["watchlist_add", "watchlist_update"] {
+        assert_eq!(arg_ty(&tool(name), "location_tier"), ArgType::OptionalString);
+      }
     }
 
     #[test]

@@ -7,6 +7,14 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- An AI assistant connected over MCP can now create an industry plan, replace a plan's build segments, and replace a
+  skill plan's entries. Each of these tools needs a list (`types`, `segments`, `entries`) that Pod never listed among
+  the tool's inputs, so an assistant that follows the published inputs could not send it and the call always failed.
+  The same gap hid the optional `conditions`, `enabled` and `match_mode` inputs of `budget_set_rule` and the
+  `location_tier` input of `watchlist_add` and `watchlist_update`. All of them are now published.
+
 ## [0.7.6]
 
 ### Fixed
