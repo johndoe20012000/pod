@@ -1,0 +1,110 @@
+name: Fork package
+# Fork-only workflow, not for upstream. Push the commit to package to the `fork-package` branch; the
+# installers appear as artifacts of the run (Actions > the run > Artifacts).
+#
+# Same build and packaging commands as scripts/package, on a lean setup (Rust and cargo-packager only).
+# No secret is used: the installers are unsigned, and with no PACKAGER_PUBLIC_KEY or POD_TELEMETRY_KEY
+# at build time the app ships with its updater and telemetry off.
+#
+# The Apple Silicon app is cross-compiled on the Intel macOS runner: the release build of the pod crate
+# takes close to an hour on either macOS runner, and the Intel one has twice the memory.
+on:
+  push:
+    branches:
+      - fork-package
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  RUST_VERSION: "1.96.0"
+  PACKAGER_VERSION: "0.11.8"
+jobs:
+  generate-icons:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          rust-cache: "false"
+      - name: Generate item icons
+        run: mise run generate:item-images-cache
+      - name: Upload item icons
+        uses: actions/upload-artifact@v7
+        with:
+          name: item-images
+          path: assets/images/items
+          retention-days: 3
+  package-macos:
+    needs: generate-icons
+    runs-on: macos-15-intel
+    timeout-minutes: 170
+    env:
+      TARGET: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download item icons
+        uses: actions/download-artifact@v8
+        with:
+          name: item-images
+          path: assets/images/items
+      - name: Install Rust and cargo-packager
+        run: |-
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target "$TARGET"
+          rustup default "$RUST_VERSION"
+          cargo install cargo-packager --version "$PACKAGER_VERSION" --locked
+      - name: Build
+        run: cargo build --release --target "$TARGET"
+      - name: Package the app
+        run: |-
+          cargo-packager --release --formats app --target "$TARGET"
+          APP=$(find "target/$TARGET/release" -maxdepth 1 -name '*.app' | head -1)
+          test -n "$APP"
+          codesign --force --deep --sign - "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "Pod-$TARGET.app.zip"
+      - name: Upload the app
+        uses: actions/upload-artifact@v7
+        with:
+          name: pod-macos-apple-silicon-app
+          if-no-files-found: error
+          retention-days: 30
+          path: Pod-aarch64-apple-darwin.app.zip
+      - name: Package the dmg
+        run: cargo-packager --release --formats dmg --target "$TARGET"
+      - name: Upload the dmg
+        uses: actions/upload-artifact@v7
+        with:
+          name: pod-macos-apple-silicon-dmg
+          if-no-files-found: error
+          retention-days: 30
+          path: target/aarch64-apple-darwin/release/*.dmg
+  package-windows:
+    needs: generate-icons
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download item icons
+        uses: actions/download-artifact@v8
+        with:
+          name: item-images
+          path: assets/images/items
+      - name: Install Rust and cargo-packager
+        shell: bash
+        run: |-
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          cargo install cargo-packager --version "$PACKAGER_VERSION" --locked
+      - name: Build
+        shell: bash
+        run: cargo build --release
+      - name: Package the installer
+        shell: bash
+        run: cargo-packager --release --formats nsis
+      - name: Upload the installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: pod-windows-installer
+          if-no-files-found: error
+          retention-days: 30
+          path: target/release/*-setup.exe
