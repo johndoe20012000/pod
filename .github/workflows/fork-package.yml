@@ -108,3 +108,45 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           path: target/release/*-setup.exe
+  package-linux:
+    needs: generate-icons
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download item icons
+        uses: actions/download-artifact@v8
+        with:
+          name: item-images
+          path: assets/images/items
+      - name: Install system libraries
+        # Same packages as .github/actions/setup: GTK/xdo for the build, plus the GL/EGL/Vulkan loaders
+        # and Mesa software drivers the AppImage bundles (ADR-0022).
+        run: |-
+          sudo apt-get update -q
+          sudo apt-get install -y libgtk-3-dev libxdo-dev \
+            libgl1 libglx0 libopengl0 libegl1 libgles2 libglvnd0 libgbm1 libvulkan1 \
+            libgl1-mesa-dri libglx-mesa0 libegl-mesa0 mesa-vulkan-drivers
+      - name: Install Rust and cargo-packager
+        run: |-
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target x86_64-unknown-linux-gnu
+          rustup default "$RUST_VERSION"
+          cargo install cargo-packager --version "$PACKAGER_VERSION" --locked
+      - name: Build
+        run: cargo build --release
+      - name: Package the deb and AppImage
+        run: cargo-packager --release --formats deb,appimage
+      - name: Upload the deb
+        uses: actions/upload-artifact@v7
+        with:
+          name: pod-linux-x86_64-deb
+          if-no-files-found: error
+          retention-days: 30
+          path: target/release/*.deb
+      - name: Upload the AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: pod-linux-x86_64-appimage
+          if-no-files-found: error
+          retention-days: 30
+          path: target/release/*.AppImage
