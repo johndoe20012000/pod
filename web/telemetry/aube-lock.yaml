@@ -10,10 +10,6 @@ time:
 importers:
 
   .:
-    dependencies:
-      vite:
-        specifier: ^6.0.0 || ^7.0.0 || ^8.0.0
-        version: 8.1.0(@types/node@22.20.0)(esbuild@0.28.1)
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260626.1
