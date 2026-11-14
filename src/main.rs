@@ -7,7 +7,12 @@
 #[macro_use]
 extern crate rust_i18n;
 
-rust_i18n::i18n!("assets/locales", fallback = "en");
+// The directory holds no locale files on purpose: the strings come from `EmbeddedLocales` (see that module).
+rust_i18n::i18n!(
+  "src/services/i18n",
+  fallback = "en",
+  backend = crate::services::i18n::EmbeddedLocales::default()
+);
 
 mod app;
 mod clients;
