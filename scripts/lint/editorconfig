@@ -3,4 +3,9 @@
 
 set -e
 
-ec -config .config/editorconfig-checker.json
+# The checker ships as `ec` in some distributions and as `editorconfig-checker` in others.
+if command -v ec >/dev/null 2>&1; then
+  ec -config .config/editorconfig-checker.json
+else
+  editorconfig-checker -config .config/editorconfig-checker.json
+fi
